@@ -1,0 +1,4 @@
+*.log
+.qmlls.ini
+*.qcow2
+.sediment/
