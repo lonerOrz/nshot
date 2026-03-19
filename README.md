@@ -2,6 +2,10 @@
 
 A Wayland screenshot tool with OCR and Google Lens support. Built with Quickshell.
 
+## Preview
+
+![Preview](.github/assets/preview.png)
+
 ## Features
 
 - **5 modes**: Save, Copy, OCR, Annotate, Lens
