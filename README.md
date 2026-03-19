@@ -44,6 +44,35 @@ A Wayland screenshot tool with OCR and Google Lens support. Built with Quickshel
 sudo pacman -S grim imagemagick tesseract wl-clipboard libnotify
 ```
 
+### NixOS
+
+Add `nshot` to your flake inputs:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nshot.url = "github:lonerOrz/nshot";
+  };
+
+  outputs = { nixpkgs, nshot, ... }: {
+    nixosConfigurations.yourHost = nixpkgs.lib.nixosSystem {
+      modules = [
+        ({ pkgs, ... }: {
+          environment.systemPackages = [ nshot.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+        })
+      ];
+    };
+  };
+}
+```
+
+Or run directly:
+
+```bash
+nix run github:lonerOrz/nshot
+```
+
 ### Manual
 
 ```bash
