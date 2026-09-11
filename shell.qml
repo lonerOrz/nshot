@@ -13,72 +13,53 @@ PanelWindow {
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
   visible: false
 
+  anchors {
+    left: true
+    right: true
+    top: true
+    bottom: true
+  }
+
   onVisibleChanged: {
     if (visible) {
       mouseArea.forceActiveFocus();
+      dockEntranceAnim.start();
     }
   }
 
-  // 模式与状态
-  property var modes: ["save", "copy", "satty", "ocr", "lens"]
+  readonly property var modes: ["save", "copy", "satty", "ocr", "lens"]
   property string currentMode: "save"
   property string fullScreenshot: ""
-  property string savedFile: ""
   property var tempFiles: []
   property bool doQuit: false
 
-  // 依赖检测表
-  property var installedTools: ({
-                                  "grim": true,
-                                  "magick": true,
-                                  "wl-copy": true,
-                                  "satty": false,
-                                  "tesseract": false,
-                                  "xdg-open": false
-                                })
-
-  readonly property var modeIcons: ({
-                                      "save": "󰋮",
-                                      "copy": "󰆏",
-                                      "satty": "󰈊",
-                                      "ocr": "󰈙",
-                                      "lens": "󰍉"
-                                    })
-
-  readonly property var modeNames: ({
-                                      "save": "Save",
-                                      "copy": "Copy",
-                                      "satty": "Satty",
-                                      "ocr": "OCR",
-                                      "lens": "Lens"
-                                    })
-
-  readonly property var featureDeps: ({
-                                        "satty": "satty",
-                                        "ocr": "tesseract",
-                                        "lens": "xdg-open"
-                                      })
-
-  function isModeAvailable(mode) {
-    if (mode === "satty")
-      return !!root.installedTools["satty"];
-    if (mode === "ocr")
-      return !!root.installedTools["tesseract"];
-    if (mode === "lens")
-      return !!root.installedTools["xdg-open"];
-    return true;
-  }
+  readonly property var modeMeta: ({
+                                     "save": {
+                                       name: "Save",
+                                       icon: "󰋮"
+                                     },
+                                     "copy": {
+                                       name: "Copy",
+                                       icon: "󰆏"
+                                     },
+                                     "satty": {
+                                       name: "Annotate",
+                                       icon: "󰈊"
+                                     },
+                                     "ocr": {
+                                       name: "OCR",
+                                       icon: "󰈙"
+                                     },
+                                     "lens": {
+                                       name: "Visual",
+                                       icon: "󰍉"
+                                     }
+                                   })
 
   function cycleMode(delta) {
     let idx = root.modes.indexOf(root.currentMode);
-    for (let step = 1; step <= root.modes.length; step++) {
-      const nextIdx = (idx + delta * step + root.modes.length * 10) % root.modes.length;
-      const candidate = root.modes[nextIdx];
-      if (isModeAvailable(candidate)) {
-        root.currentMode = candidate;
-        return;
-      }
-    }
+    let nextIdx = (idx + delta + root.modes.length) % root.modes.length;
+    root.currentMode = root.modes[nextIdx];
   }
 
   function shellEscape(str) {
@@ -89,10 +70,6 @@ PanelWindow {
     const d = new Date();
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  }
-
-  function buildCrop(w, h, x, y) {
-    return `magick ${shellEscape(root.fullScreenshot)} -crop ${w}x${h}+${x}+${y} +repage`;
   }
 
   function getTempPath(prefix, ext) {
@@ -108,14 +85,18 @@ PanelWindow {
     root.fullScreenshot = "";
   }
 
-  // 初始截屏
+  function buildCrop(w, h, x, y) {
+    return `magick ${shellEscape(root.fullScreenshot)} -crop ${w}x${h}+${x}+${y} +repage +dither`;
+  }
+
+  // 写入 /dev/shm 内存盘并使用 -l 0 无压缩输出，消减磁盘 I/O 阻塞加速响应
   function initCapture() {
     if (root.fullScreenshot === "" && !grimProc.running) {
       cursorFetcher.running = true;
       root.fullScreenshot = getTempPath("nshot-raw", "png");
       root.tempFiles.push(root.fullScreenshot);
 
-      const cmd = ["grim", "-l", "1"];
+      const cmd = ["grim", "-l", "0"];
       if (root.screen && root.screen.name) {
         cmd.push("-o", root.screen.name);
       }
@@ -126,36 +107,17 @@ PanelWindow {
     }
   }
 
-  onScreenChanged: initCapture()
-
-  Component.onCompleted: {
-    depChecker.running = true;
-    initCapture();
-  }
-
-  // 执行动作
   function executeAction() {
     if (!root.fullScreenshot)
       return;
 
-    if (!isModeAvailable(root.currentMode)) {
-      const dep = root.featureDeps[root.currentMode];
-      Quickshell.execDetached(["notify-send", "-u", "critical", "nshot", `Feature unavailable: [${dep}] is not installed.`]);
-      cleanupFiles();
-      Qt.quit();
-      return;
-    }
+    const scaleFactor = (bgImage.sourceSize.width > 0 && root.width > 0) ? (bgImage.sourceSize.width / root.width) : (root.screen ? root.screen.scale : 1);
+    const x = Math.round(selector.selectionX * scaleFactor);
+    const y = Math.round(selector.selectionY * scaleFactor);
+    const w = Math.round(selector.selectionWidth * scaleFactor);
+    const h = Math.round(selector.selectionHeight * scaleFactor);
 
-    // 动态换算缩放比例
-    const scaleX = (bgImage.sourceSize.width > 0 && root.width > 0) ? (bgImage.sourceSize.width / root.width) : 1;
-    const scaleY = (bgImage.sourceSize.height > 0 && root.height > 0) ? (bgImage.sourceSize.height / root.height) : 1;
-
-    const x = Math.round(selector.selectionX * scaleX);
-    const y = Math.round(selector.selectionY * scaleY);
-    const w = Math.round(selector.selectionWidth * scaleX);
-    const h = Math.round(selector.selectionHeight * scaleY);
-
-    if (w < 10 || h < 10)
+    if (w < 8 || h < 8)
       return;
 
     root.visible = false;
@@ -166,12 +128,12 @@ PanelWindow {
     const saveDir = homeDir ? `${homeDir}/Pictures/Screenshots` : "/tmp";
 
     if (root.currentMode === "save") {
-      root.savedFile = `${saveDir}/Screenshot_${formatTimestamp()}.png`;
-      const cmd = [`mkdir -p ${shellEscape(saveDir)}`, `${crop} ${shellEscape(root.savedFile)}`, `wl-copy -t image/png < ${shellEscape(root.savedFile)}`, `notify-send 'Saved' ${shellEscape("Screenshot saved to " + root.savedFile)}`].join(" && ");
+      const savedFile = `${saveDir}/Screenshot_${formatTimestamp()}.png`;
+      const cmd = [`mkdir -p ${shellEscape(saveDir)}`, `${crop} ${shellEscape(savedFile)}`, `wl-copy -t image/png < ${shellEscape(savedFile)}`, `notify-send -i ${shellEscape(savedFile)} 'Saved' ${shellEscape(savedFile)}`].join(" && ");
       proc.command = ["sh", "-c", cmd];
       proc.running = true;
     } else if (root.currentMode === "copy") {
-      const cmd = `${crop} png:- | wl-copy -t image/png && notify-send 'Copied' 'Screenshot copied to clipboard'`;
+      const cmd = `${crop} png:- | wl-copy -t image/png && notify-send 'Copied' 'Image copied to clipboard'`;
       proc.command = ["sh", "-c", cmd];
       proc.running = true;
     } else if (root.currentMode === "satty") {
@@ -179,13 +141,12 @@ PanelWindow {
       const targetFile = `${saveDir}/Screenshot_${formatTimestamp()}.png`;
       root.tempFiles.push(outFile);
 
-      const cmd = [`mkdir -p ${shellEscape(saveDir)}`, `${crop} ${shellEscape(outFile)}`, `satty -f ${shellEscape(outFile)} -o ${shellEscape(targetFile)} --fullscreen --early-exit`, `[ -f ${shellEscape(targetFile)} ] && wl-copy -t image/png < ${shellEscape(targetFile)} && notify-send 'Satty' ${shellEscape("Annotated screenshot saved: " + targetFile)}`].join(
-              " && ");
+      const cmd = [`mkdir -p ${shellEscape(saveDir)}`, `${crop} ${shellEscape(outFile)}`, `satty -f ${shellEscape(outFile)} -o ${shellEscape(targetFile)} --fullscreen --early-exit`, `[ -f ${shellEscape(targetFile)} ] && wl-copy -t image/png < ${shellEscape(targetFile)} && notify-send 'Satty' 'Saved to disk'`].join(" && ");
       proc.command = ["sh", "-c", cmd];
       proc.running = true;
     } else if (root.currentMode === "ocr") {
-      const ocrFilter = `${crop} -colorspace gray -resize 200% -density 300 -resample 300 -contrast-stretch 1%x1% png:-`;
-      const cmd = [ocrFilter, `tesseract - - -l eng+chi_sim --psm 6`, `awk 'BEGIN{RS=""; FS="\\n"; ORS="\\n\\n"} {for(i=1;i<=NF;i++){printf "%s ",$i} printf "\\n"}'`, `wl-copy`].join(" | ") + ` && notify-send 'OCR Complete' 'Text copied to clipboard'`;
+      const ocrFilter = `${crop} -colorspace gray -filter Lanczos -resize 200% -density 300 -resample 300 -contrast-stretch 1%x1% png:-`;
+      const cmd = [ocrFilter, `tesseract - - -l eng+chi_sim --psm 6`, `awk 'BEGIN{RS=""; FS="\\n"; ORS="\\n\\n"} {for(i=1;i<=NF;i++){printf "%s ",$i} printf "\\n"}'`, `wl-copy`].join(" | ") + ` && notify-send 'OCR Finished' 'Text copied to clipboard'`;
       proc.command = ["sh", "-c", cmd];
       proc.running = true;
     } else if (root.currentMode === "lens") {
@@ -193,17 +154,16 @@ PanelWindow {
       const tmpJpg = getTempPath("snip-lens", "jpg");
       const tmpHtml = getTempPath("snip-lens", "html");
 
-      // 转交后台异步清理，防止 proc.onExited 立即误删浏览器还没读取的临时文件
       root.tempFiles = [];
       root.fullScreenshot = "";
 
       const buildHtml
-            = [`echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Google Lens</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#111;color:#fff;font-family:system-ui"><p>Searching with Google Lens...</p><form id="f" method="POST" enctype="multipart/form-data"><input type="hidden" name="processed_image_dimensions" value="'"$DIM"'"></form><script>'`,
+            = [`echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Lens</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#141218;color:#e6e1e5;font-family:system-ui"><p>Searching visual...</p><form id="f" method="POST" enctype="multipart/form-data"><input type="hidden" name="processed_image_dimensions" value="'"$DIM"'"></form><script>'`,
                `echo 'var b=atob("'"$B64"'");'`,
                `echo 'var a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);var d=new DataTransfer();d.items.add(new File([a],"image.jpg",{type:"image/jpeg"}));var inp=document.createElement("input");inp.type="file";inp.name="encoded_image";inp.files=d.files;var f=document.getElementById("f");f.appendChild(inp);f.action="https://lens.google.com/v3/upload?ep=ccm&s=&st="+Date.now();f.submit();'`,
                `echo '</script></body></html>'`].join(" ; ");
 
-      const cmd = [`${crop} -resize '1000x1000>' -strip -quality 85 ${shellEscape(tmpJpg)}`, `DIM=$(magick identify -format "%w,%h" ${shellEscape(tmpJpg)} 2>/dev/null || echo "1000,1000")`, `B64=$(base64 -w0 ${shellEscape(tmpJpg)} 2>/dev/null || base64 -b0 ${shellEscape(tmpJpg)})`, `[ -n "$B64" ]`, `{ ${buildHtml} ; } > ${shellEscape(tmpHtml)}`, `xdg-open
+      const cmd = [`${crop} -resize '1200x1200>' -strip -quality 92 ${shellEscape(tmpJpg)}`, `DIM=$(magick identify -format "%w,%h" ${shellEscape(tmpJpg)} 2>/dev/null || echo "1200,1200")`, `B64=$(base64 -w0 ${shellEscape(tmpJpg)} 2>/dev/null || base64 -b0 ${shellEscape(tmpJpg)})`, `[ -n "$B64" ]`, `{ ${buildHtml} ; } > ${shellEscape(tmpHtml)}`, `xdg-open 
 ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(rawScreenshot)} ${shellEscape(tmpJpg)} ${shellEscape(tmpHtml)}) &`;
 
       proc.command = ["sh", "-c", cmd];
@@ -211,22 +171,9 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
     }
   }
 
-  anchors {
-    left: true
-    right: true
-    top: true
-    bottom: true
-  }
+  onScreenChanged: initCapture()
+  Component.onCompleted: initCapture()
 
-  Image {
-    id: bgImage
-    anchors.fill: parent
-    asynchronous: false
-    cache: false
-    z: 0
-  }
-
-  // 光标初始位置获取
   Process {
     id: cursorFetcher
     command: ["hyprctl", "cursorpos"]
@@ -248,23 +195,6 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
     }
   }
 
-  // 依赖检测
-  Process {
-    id: depChecker
-    command: ["sh", "-c", "for c in satty tesseract xdg-open; do command -v \"$c\" >/dev/null 2>&1 && echo \"$c\"; done"]
-    stdout: SplitParser {
-      onRead: data => {
-        const tool = data.trim();
-        if (tool.length > 0) {
-          const updated = Object.assign({}, root.installedTools);
-          updated[tool] = true;
-          root.installedTools = updated;
-        }
-      }
-    }
-  }
-
-  // 截屏抓取
   Process {
     id: grimProc
     onExited: code => {
@@ -272,30 +202,35 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
         bgImage.source = "file://" + root.fullScreenshot;
         root.visible = true;
       } else {
-        console.error("grim failed with code:", code);
         cleanupFiles();
         Qt.quit();
       }
     }
   }
 
-  // 命令执行
   Process {
     id: proc
     onExited: code => {
-      if (code !== 0) {
-        console.error("Action failed with code:", code);
-      }
       cleanupFiles();
-      if (root.doQuit) {
+      if (root.doQuit)
         Qt.quit();
-      }
     }
   }
 
-  // 交互与选区
+  Image {
+    id: bgImage
+    anchors.fill: parent
+    asynchronous: false
+    cache: false
+    smooth: false
+    mipmap: false
+    z: 0
+  }
+
   Item {
     id: selector
+    anchors.fill: parent
+    z: 1
 
     property real selectionX: 0
     property real selectionY: 0
@@ -307,66 +242,55 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
     property bool mouseMoved: false
     property bool hasPointer: false
 
-    anchors.fill: parent
-    z: 1
-
-    // 四向遮罩
     Item {
       id: dimMask
       anchors.fill: parent
-      z: 1
-
-      property bool hasSelection: selector.selectionWidth > 0 && selector.selectionHeight > 0
+      property bool active: selector.selectionWidth > 0 && selector.selectionHeight > 0
 
       Rectangle {
         x: 0
         y: 0
         width: parent.width
-        height: dimMask.hasSelection ? selector.selectionY : parent.height
-        color: Qt.rgba(0, 0, 0, 0.5)
+        height: dimMask.active ? selector.selectionY : parent.height
+        color: Qt.rgba(0.04, 0.04, 0.06, 0.48)
       }
-
       Rectangle {
         x: 0
         y: selector.selectionY + selector.selectionHeight
         width: parent.width
         height: Math.max(0, parent.height - y)
-        color: Qt.rgba(0, 0, 0, 0.5)
-        visible: dimMask.hasSelection
+        color: Qt.rgba(0.04, 0.04, 0.06, 0.48)
+        visible: dimMask.active
       }
-
       Rectangle {
         x: 0
         y: selector.selectionY
         width: selector.selectionX
         height: selector.selectionHeight
-        color: Qt.rgba(0, 0, 0, 0.5)
-        visible: dimMask.hasSelection
+        color: Qt.rgba(0.04, 0.04, 0.06, 0.48)
+        visible: dimMask.active
       }
-
       Rectangle {
         x: selector.selectionX + selector.selectionWidth
         y: selector.selectionY
         width: Math.max(0, parent.width - x)
         height: selector.selectionHeight
-        color: Qt.rgba(0, 0, 0, 0.5)
-        visible: dimMask.hasSelection
+        color: Qt.rgba(0.04, 0.04, 0.06, 0.48)
+        visible: dimMask.active
       }
     }
 
-    // 十字准星
     Shape {
-      id: dashedCrosshair
       anchors.fill: parent
       visible: !mouseArea.pressed && (selector.hasPointer || mouseArea.containsMouse || selector.mouseMoved)
       z: 2
 
       ShapePath {
-        strokeColor: Qt.rgba(1, 1, 1, 0.45)
+        strokeColor: Qt.rgba(1, 1, 1, 0.28)
         strokeWidth: 1
         fillColor: "transparent"
         strokeStyle: ShapePath.DashLine
-        dashPattern: [4, 4]
+        dashPattern: [3, 4]
         startX: selector.mouseX
         startY: 0
         PathLine {
@@ -374,13 +298,12 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
           y: selector.height
         }
       }
-
       ShapePath {
-        strokeColor: Qt.rgba(1, 1, 1, 0.45)
+        strokeColor: Qt.rgba(1, 1, 1, 0.28)
         strokeWidth: 1
         fillColor: "transparent"
         strokeStyle: ShapePath.DashLine
-        dashPattern: [4, 4]
+        dashPattern: [3, 4]
         startX: 0
         startY: selector.mouseY
         PathLine {
@@ -390,17 +313,21 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
       }
     }
 
-    // 选区边框
     Rectangle {
       x: selector.selectionX
       y: selector.selectionY
       width: selector.selectionWidth
       height: selector.selectionHeight
       color: "transparent"
-      border.color: "#cba6f7"
-      border.width: 1
+      border.color: "#A8C7FA"
+      border.width: 1.5
       visible: mouseArea.pressed && selector.selectionWidth > 0
-      z: 2
+      z: 3
+
+      Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0.66, 0.78, 0.98, 0.05)
+      }
     }
 
     MouseArea {
@@ -419,13 +346,9 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
         root.cycleMode(event.modifiers & Qt.ShiftModifier ? -1 : 1);
         event.accepted = true;
       }
-      Keys.onBacktabPressed: {
-        root.cycleMode(-1);
-      }
+      Keys.onBacktabPressed: root.cycleMode(-1)
 
-      onEntered: {
-        selector.hasPointer = true;
-      }
+      onEntered: selector.hasPointer = true
 
       onPressed: mouse => {
         if (mouse.button === Qt.RightButton) {
@@ -459,125 +382,125 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
           Qt.quit();
           return;
         }
-        if (selector.selectionWidth > 10 && selector.selectionHeight > 10) {
+        if (selector.selectionWidth > 8 && selector.selectionHeight > 8) {
           root.executeAction();
         }
       }
     }
 
-    // 选区尺寸指示
     Rectangle {
       visible: mouseArea.pressed && selector.selectionWidth > 20
-      x: selector.selectionX + selector.selectionWidth / 2 - width / 2
-      y: Math.max(12, selector.selectionY - 34)
-      width: sizeLabel.implicitWidth + 16
+      x: Math.max(12, Math.min(parent.width - width - 12, selector.selectionX + selector.selectionWidth / 2 - width / 2))
+      y: (selector.selectionY > 40) ? selector.selectionY - 32 : selector.selectionY + selector.selectionHeight + 10
+      width: sizeContent.implicitWidth + 18
       height: 24
-      radius: 12
-      color: Qt.rgba(0.08, 0.08, 0.12, 0.85)
+      radius: 6
+      color: "#1E1F24"
       border.color: Qt.rgba(1, 1, 1, 0.15)
       border.width: 1
-      z: 100
+      z: 10
 
-      Text {
-        id: sizeLabel
+      Row {
+        id: sizeContent
         anchors.centerIn: parent
-        text: `${Math.round(selector.selectionWidth)} × ${Math.round(selector.selectionHeight)}`
-        color: "#cdd6f4"
-        font.pixelSize: 11
-        font.weight: Font.DemiBold
-        font.family: "monospace"
+        spacing: 4
+        Text {
+          text: `${Math.round(selector.selectionWidth)} × ${Math.round(selector.selectionHeight)}`
+          color: "#E2E2E9"
+          font.pixelSize: 11
+          font.weight: Font.DemiBold
+          font.family: "JetBrains Mono, monospace"
+        }
       }
     }
   }
 
-  // 底部控制操作栏
+  // MD3 适中紧凑型底栏（Squircle 现代圆角 + 物理弹簧位移动效）
   Item {
-    id: controlContainer
-    z: 10
+    id: dock
+    z: 20
     anchors {
       bottom: parent.bottom
       horizontalCenter: parent.horizontalCenter
-      bottomMargin: 48
+      bottomMargin: 32
     }
-    width: controlBar.width
-    height: controlBar.height + hintRow.height + 12
+    width: m3Bar.width
+    height: m3Bar.height + m3Hints.height + 10
+
+    ParallelAnimation {
+      id: dockEntranceAnim
+      NumberAnimation {
+        target: dock
+        property: "opacity"
+        from: 0.0
+        to: 1.0
+        duration: 220
+        easing.type: Easing.OutCubic
+      }
+      NumberAnimation {
+        target: dock
+        property: "anchors.bottomMargin"
+        from: 16
+        to: 32
+        duration: 260
+        easing.type: Easing.OutBack
+      }
+    }
+
+    readonly property int itemWidth: 88
+    readonly property int itemHeight: 38
 
     Rectangle {
-      id: controlBar
-      width: 566
-      height: 48
-      radius: 24
-      color: Qt.rgba(0.07, 0.08, 0.11, 0.82)
+      id: m3Bar
+      width: (dock.itemWidth * root.modes.length) + 8
+      height: 46
+      radius: 12
+      color: Qt.rgba(0.09, 0.10, 0.12, 0.90)
       border.color: Qt.rgba(1, 1, 1, 0.12)
       border.width: 1
 
-      // 指示滑块
+      // 独立的 MD3 动态指示滑块
       Rectangle {
-        id: highlight
-        height: parent.height - 10
-        width: 108
-        y: 5
-        radius: height / 2
-        x: 5 + (Math.max(0, root.modes.indexOf(root.currentMode)) * 110)
+        id: activePill
+        y: 4
+        height: dock.itemHeight
+        width: dock.itemWidth
+        radius: 8
+        color: "#A8C7FA"
 
-        gradient: Gradient {
-          orientation: Gradient.Vertical
-          GradientStop {
-            position: 0.0
-            color: "#d9bbf9"
-          }
-          GradientStop {
-            position: 1.0
-            color: "#bfa1f6"
-          }
-        }
-
-        border.color: Qt.rgba(1, 1, 1, 0.35)
-        border.width: 1
+        readonly property int currentIndex: Math.max(0, root.modes.indexOf(root.currentMode))
+        x: 4 + (currentIndex * dock.itemWidth)
 
         Behavior on x {
           NumberAnimation {
-            duration: 180
-            easing.type: Easing.OutCubic
+            duration: 280
+            easing.type: Easing.OutBack
+            easing.overshoot: 1.15
           }
         }
       }
 
       Row {
-        anchors.fill: parent
-        anchors.margins: 5
-        spacing: 2
+        id: modeFlow
+        anchors.centerIn: parent
 
         Repeater {
           model: root.modes
 
           Item {
             id: tabBtn
-            property bool available: root.isModeAvailable(modelData)
-            property bool isActive: root.currentMode === modelData
-            width: 108
-            height: controlBar.height - 10
+            readonly property string mId: modelData
+            readonly property var mMeta: root.modeMeta[mId]
+            readonly property bool active: root.currentMode === mId
+
+            width: dock.itemWidth
+            height: dock.itemHeight
 
             Rectangle {
               anchors.fill: parent
-              radius: height / 2
-              color: Qt.rgba(1, 1, 1, 0.05)
-              visible: !tabBtn.isActive && tabMouse.containsMouse && tabBtn.available
-            }
-
-            MouseArea {
-              id: tabMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: tabBtn.available ? Qt.PointingHandCursor : Qt.ForbiddenCursor
-              onClicked: {
-                if (tabBtn.available) {
-                  root.currentMode = modelData;
-                } else {
-                  const dep = root.featureDeps[modelData];
-                  Quickshell.execDetached(["notify-send", "-u", "normal", "nshot", `Feature unavailable: Please install [${dep}] to use ${modelData} mode.`]);
-                }
-              }
+              radius: 8
+              color: Qt.rgba(1, 1, 1, 0.06)
+              visible: tabMouse.containsMouse && !tabBtn.active
             }
 
             Row {
@@ -585,102 +508,104 @@ ${shellEscape(tmpHtml)}`].join(" && ") + ` ; (sleep 15 && rm -f ${shellEscape(ra
               spacing: 6
 
               Text {
-                text: root.modeIcons[modelData]
+                text: tabBtn.mMeta.icon
+                font.family: "Symbols Nerd Font, monospace"
+                font.pixelSize: 15
                 anchors.verticalCenter: parent.verticalCenter
-                font.family: "Symbols Nerd Font"
-                font.pixelSize: 14
-                color: tabBtn.isActive ? "#11111b" : (tabBtn.available ? (tabMouse.containsMouse ? "#ffffff" : "#cdd6f4") : "#585b70")
+                color: tabBtn.active ? "#062E6F" : "#C4C6D0"
+                Behavior on color {
+                  ColorAnimation {
+                    duration: 160
+                  }
+                }
               }
 
               Text {
-                text: root.modeNames[modelData]
-                anchors.verticalCenter: parent.verticalCenter
+                text: tabBtn.mMeta.name
+                font.family: "Inter, Roboto, system-ui, sans-serif"
                 font.pixelSize: 12
-                font.weight: tabBtn.isActive ? Font.Bold : Font.Medium
-                color: tabBtn.isActive ? "#11111b" : (tabBtn.available ? (tabMouse.containsMouse ? "#ffffff" : "#a6adc8") : "#585b70")
-              }
-
-              Rectangle {
-                visible: !tabBtn.available
+                font.weight: tabBtn.active ? Font.Bold : Font.Medium
                 anchors.verticalCenter: parent.verticalCenter
-                width: 5
-                height: 5
-                radius: 2.5
-                color: "#f38ba8"
+                color: tabBtn.active ? "#062E6F" : "#E2E2E9"
+                Behavior on color {
+                  ColorAnimation {
+                    duration: 160
+                  }
+                }
               }
+            }
+
+            MouseArea {
+              id: tabMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.currentMode = tabBtn.mId
             }
           }
         }
       }
     }
 
-    // 快捷键提示
     Row {
-      id: hintRow
-      anchors.top: controlBar.bottom
-      anchors.topMargin: 10
-      anchors.horizontalCenter: controlBar.horizontalCenter
-      spacing: 16
+      id: m3Hints
+      anchors.top: m3Bar.bottom
+      anchors.topMargin: 8
+      anchors.horizontalCenter: m3Bar.horizontalCenter
+      spacing: 14
 
-      Row {
-        spacing: 6
-        anchors.verticalCenter: parent.verticalCenter
-        Rectangle {
-          width: tabKeyText.implicitWidth + 8
-          height: 16
-          radius: 4
-          color: Qt.rgba(0.12, 0.13, 0.18, 0.75)
-          border.color: Qt.rgba(1, 1, 1, 0.1)
-          border.width: 1
-          Text {
-            id: tabKeyText
-            anchors.centerIn: parent
-            text: "Tab"
-            font.pixelSize: 10
-            font.weight: Font.DemiBold
-            font.family: "monospace"
-            color: "#bac2de"
+      Repeater {
+        model: [
+          {
+            k: "Tab",
+            l: "Switch"
+          },
+          {
+            k: "Esc",
+            l: "Quit"
+          },
+          {
+            k: "R-Click",
+            l: "Cancel"
           }
-        }
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: "Switch"
-          font.pixelSize: 11
-          color: "#6c7086"
-        }
-      }
+        ]
 
-      Row {
-        spacing: 6
-        anchors.verticalCenter: parent.verticalCenter
-        Rectangle {
-          width: escKeyText.implicitWidth + 8
-          height: 16
-          radius: 4
-          color: Qt.rgba(0.12, 0.13, 0.18, 0.75)
-          border.color: Qt.rgba(1, 1, 1, 0.1)
-          border.width: 1
-          Text {
-            id: escKeyText
-            anchors.centerIn: parent
-            text: "Esc"
-            font.pixelSize: 10
-            font.weight: Font.DemiBold
-            font.family: "monospace"
-            color: "#bac2de"
-          }
-        }
-        Text {
+        Row {
+          spacing: 6
           anchors.verticalCenter: parent.verticalCenter
-          text: "Cancel"
-          font.pixelSize: 11
-          color: "#6c7086"
+
+          Rectangle {
+            width: hintKeyText.implicitWidth + 8
+            height: 18
+            radius: 4
+            color: "#22242A"
+            border.color: Qt.rgba(1, 1, 1, 0.22)
+            border.width: 1
+
+            Text {
+              id: hintKeyText
+              anchors.centerIn: parent
+              text: modelData.k
+              font.pixelSize: 10
+              font.weight: Font.Bold
+              font.family: "JetBrains Mono, monospace"
+              color: "#E2E2E9"
+            }
+          }
+
+          Text {
+            text: modelData.l
+            font.family: "Inter, system-ui, sans-serif"
+            font.pixelSize: 11
+            font.weight: Font.Medium
+            color: "#C4C6D0"
+            anchors.verticalCenter: parent.verticalCenter
+          }
         }
       }
     }
   }
 
-  // 全局快捷键
   Shortcut {
     sequence: "Tab"
     onActivated: root.cycleMode(1)
