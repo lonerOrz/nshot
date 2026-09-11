@@ -1,15 +1,16 @@
 #version 440
+
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
-    float qt_Opacity;
-    vec4 selectionRect;
-    float dimOpacity;
-    vec2 screenSize;
-    float borderRadius;        // in pixels
-    float outlineThickness;    // in pixels
+    vec4 selectionRect;       // offset: 64,  size: 16
+    vec2 screenSize;          // offset: 80,  size: 8
+    float qt_Opacity;         // offset: 88,  size: 4
+    float dimOpacity;         // offset: 92,  size: 4
+    float borderRadius;       // offset: 96,  size: 4
+    float outlineThickness;   // offset: 100, size: 4
 };
 
 float sdRoundedBox(vec2 p, vec2 b, float r) {
@@ -18,27 +19,18 @@ float sdRoundedBox(vec2 p, vec2 b, float r) {
 }
 
 void main() {
-    vec2 halfSize = selectionRect.zw / 2.0;
+    vec2 halfSize = selectionRect.zw * 0.5;
     vec2 center = selectionRect.xy + halfSize;
-    vec2 pixelPos = qt_TexCoord0 * screenSize;
-    vec2 p = pixelPos - center;
+    vec2 p = (qt_TexCoord0 * screenSize) - center;
 
     float dist = sdRoundedBox(p, halfSize, borderRadius);
 
-    // Smooth outline with anti-aliasing (1px transition)
-    float outlineEdge = outlineThickness;
-    float outlineAlpha = 1.0 - smoothstep(outlineEdge - 1.0, outlineEdge, dist);
+    float aa = fwidth(dist);
+    float outlineAlpha = 1.0 - smoothstep(outlineThickness - aa, outlineThickness, dist);
+    float fillMask = smoothstep(0.0, aa, dist); // 0.0 为内部，1.0 为外部
 
-    bool insideFilledArea = dist <= 0.0;
+    vec3 col = mix(vec3(0.0), vec3(1.0), outlineAlpha);
+    float alpha = mix(dimOpacity, 1.0, outlineAlpha) * fillMask;
 
-    if (insideFilledArea) {
-        fragColor = vec4(0.0, 0.0, 0.0, 0.0);
-    } else {
-        // Mix between outline and dimmed background
-        vec3 outlineColor = vec3(1.0);
-        vec3 dimColor = vec3(0.0);
-        vec3 color = mix(dimColor, outlineColor, outlineAlpha);
-        float alpha = mix(dimOpacity, 1.0, outlineAlpha);
-        fragColor = vec4(color, alpha * qt_Opacity);
-    }
+    fragColor = vec4(col, alpha * qt_Opacity);
 }

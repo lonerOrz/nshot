@@ -3,102 +3,90 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    adios-flake.url = "github:Mic92/adios-flake";
-    treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
   outputs =
-    inputs@{
-      adios-flake,
-      self,
-      ...
-    }:
-    adios-flake.lib.mkFlake {
-      inherit inputs self;
-
+    { self, nixpkgs }:
+    let
       systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
-
-      modules = [ ];
-
-      perSystem =
-        {
-          self',
-          pkgs,
-          ...
-        }:
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+    in
+    {
+      packages = forAllSystems (
+        system:
         let
+          pkgs = nixpkgs.legacyPackages.${system};
           lib = pkgs.lib;
-          treefmtEval = inputs.treefmt-nix.lib.evalModule pkgs {
-            projectRootFile = "flake.nix";
-            programs = {
-              nixfmt.enable = true;
-              shfmt.enable = true;
-            };
-          };
 
           runtimeDeps = with pkgs; [
+            curl
+            coreutils
+            gawk
             grim
             imagemagick
+            satty
             tesseract
             wl-clipboard
             xdg-utils
             libnotify
           ];
 
-          # Copy source files to store
-          nshotSrc = pkgs.runCommand "nshot-src" { } ''
-            mkdir -p $out/share/nshot
-            cp -r ${./.}/* $out/share/nshot/
-          '';
+          nshot = pkgs.stdenv.mkDerivation {
+            pname = "nshot";
+            version = "0.2.0";
 
-          nshotScript = pkgs.writeShellScriptBin "nshot" ''
-            exec ${pkgs.quickshell}/bin/quickshell -c ${nshotSrc}/share/nshot -n "$@"
-          '';
+            src = lib.cleanSource ./.;
 
-          nshotPackage = pkgs.symlinkJoin {
-            name = "nshot";
-            paths = [ nshotScript ];
-            buildInputs = [ pkgs.makeWrapper ];
-            postBuild = ''
-              wrapProgram $out/bin/nshot \
-                --prefix PATH : ${lib.makeBinPath runtimeDeps}
+            nativeBuildInputs = [
+              pkgs.makeWrapper
+            ];
+
+            dontWrapQtApps = true;
+
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/bin $out/share/nshot
+              cp -r * $out/share/nshot/
+
+              makeWrapper ${pkgs.quickshell}/bin/quickshell $out/bin/nshot \
+                --prefix PATH : ${lib.makeBinPath runtimeDeps} \
+                --add-flags "-c $out/share/nshot -n"
+              runHook postInstall
             '';
+
+            meta = {
+              description = "A Wayland screenshot tool with OCR and Google Lens support";
+              homepage = "https://github.com/lonerOrz/nshot";
+              mainProgram = "nshot";
+              license = lib.licenses.bsd3;
+              platforms = lib.platforms.linux;
+            };
           };
         in
         {
-          formatter = treefmtEval.config.build.wrapper;
+          default = nshot;
+          nshot = nshot;
+        }
+      );
 
-          packages = {
-            default = self'.packages.nshot;
-
-            nshot = nshotPackage // {
-              meta = {
-                description = "A Wayland screenshot tool with OCR and Google Lens support";
-                homepage = "https://github.com/lonerOrz/nshot";
-                mainProgram = "nshot";
-                license = lib.licenses.bsd3;
-                maintainers = with lib.maintainers; [ lonerOrz ];
-                platforms = [
-                  "x86_64-linux"
-                  "aarch64-linux"
-                ];
-              };
-            };
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              quickshell
+              nixfmt
+            ];
           };
+        }
+      );
 
-          devShells.default = pkgs.mkShell {
-            inputsFrom = [ self'.packages.default ];
-            packages =
-              with pkgs;
-              [
-                quickshell
-                satty
-              ]
-              ++ runtimeDeps;
-          };
-        };
+      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
     };
 }

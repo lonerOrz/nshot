@@ -1,124 +1,87 @@
 # nshot
 
-A Wayland screenshot tool with OCR and Google Lens support. Built with Quickshell.
-
-## Preview
+A blazing-fast Wayland screenshot tool with OCR, Google Lens, and Satty annotation. Built with [Quickshell](https://quickshell.outfoxxed.me/).
 
 ![Preview](.github/assets/preview.png)
 
-## Features
+## Modes
 
-- **5 modes**: Save, Copy, OCR, Annotate, Lens
-- **Region selection** with dimmed background and size preview
-- **Tab/Shift+Tab** to cycle modes
-- **Compositor-agnostic**: works on Hyprland, Sway, River, Niri, etc.
+| Mode        | Action                                                | Dependency    |
+| :---------- | :---------------------------------------------------- | :------------ |
+| **󰋮 Save**  | Save to `~/Pictures/Screenshots/` + copy to clipboard | _None (Core)_ |
+| **󰆏 Copy**  | Copy cropped image to clipboard                       | _None (Core)_ |
+| **󰈊 Satty** | Annotate in Satty → save + copy                       | `satty`       |
+| **󰈙 OCR**   | Extract text (English + Simplified Chinese)           | `tesseract`   |
+| **󰍉 Lens**  | Search with Google Lens in browser                    | `xdg-utils`   |
+
+> Missing optional tools will simply disable their respective tabs without breaking core functionality.
 
 ## Dependencies
 
-### Required
-
-- **quickshell** - QML-based Wayland shell
-- **grim** - Screenshot capture
-- **imagemagick** - Image processing
-- **tesseract** - OCR (eng+chi_sim)
-- **wl-clipboard** - Clipboard support
-- **xdg-utils** - Desktop integration
-- **libnotify** - Notifications
-- **[Satty](https://github.com/giantvince/satty)** - Annotation tool for Draw mode
-
-## Modes
-
-| Mode | Action                                        |
-| ---- | --------------------------------------------- |
-| Save | Save to `~/Pictures/Screenshots/` + clipboard |
-| Copy | Copy to clipboard                             |
-| OCR  | Extract text (Tesseract) → clipboard          |
-| Lens | Open in Google Lens                           |
-| Draw | Annotate in Satty → clipboard                 |
+- **Required:** `quickshell`, `grim`, `imagemagick`, `wl-clipboard`
+- **Optional:** `satty`, `tesseract` (with `eng` & `chi_sim` data), `xdg-utils` (`xdg-open`), `libnotify`, `Symbols Nerd Font`
 
 ## Installation
 
-### Arch
+### Nix / NixOS
 
 ```bash
-sudo pacman -S grim imagemagick tesseract wl-clipboard libnotify
+# Run directly
+nix run github:lonerOrz/nshot
 ```
 
-### NixOS
-
-Add `nshot` to your flake inputs:
+<details>
+<summary>Flake configuration</summary>
 
 ```nix
 {
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nshot.url = "github:lonerOrz/nshot";
-  };
+  inputs.nshot.url = "github:lonerOrz/nshot";
 
   outputs = { nixpkgs, nshot, ... }: {
     nixosConfigurations.yourHost = nixpkgs.lib.nixosSystem {
-      modules = [
-        ({ pkgs, ... }: {
-          environment.systemPackages = [ nshot.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-        })
-      ];
+      modules = [{
+        environment.systemPackages = [ nshot.packages.${system}.default ];
+      }];
     };
   };
 }
 ```
 
-Or run directly:
+</details>
+
+### Arch Linux
 
 ```bash
-nix run github:lonerOrz/nshot
-```
+# Core + optional dependencies
+sudo pacman -S grim imagemagick wl-clipboard \
+  satty tesseract tesseract-data-eng tesseract-data-chi_sim xdg-utils libnotify ttf-nerd-fonts-symbols
 
-### Manual
-
-```bash
-mkdir -p ~/.config/quickshell
+# Clone config
 git clone https://github.com/lonerOrz/nshot.git ~/.config/quickshell/nshot
 ```
 
-## Usage
+## Keybindings & Usage
 
-1. Launch with keybind
-2. Click and drag to select region
-3. Release to execute action
-4. Right-click to cancel
+| Input                     | Action                              |
+| :------------------------ | :---------------------------------- |
+| **Drag & Release**        | Select area and execute active mode |
+| **Tab** / **Shift+Tab**   | Switch modes                        |
+| **Right-click** / **Esc** | Cancel                              |
 
-## Configuration
-
-Add a keybind to your compositor:
-
-### Hyprland
+### Compositor Setup
 
 ```ini
-bind = $mainMod SHIFT, T, exec, quickshell -c nshot -n
+# Hyprland
+bind = $mainMod SHIFT, T, exec, nshot  # or: quickshell -c nshot -n
+
+# Sway
+bindsym $mod+Shift+t exec nshot
+
+# Niri
+binds { Mod+Shift+T { spawn "nshot"; } }
 ```
 
-### Niri
+## Acknowledgments & License
 
-```kdl
-binds {
-    Mod+Shift+T { spawn "quickshell" "-c" "nshot" "-n"; }
-}
-```
-
-If selection appears offset, try:
-
-```bash
-env QT_SCALE_FACTOR=1 QT_AUTO_SCREEN_SCALE_FACTOR=0 quickshell -c nshot -n
-```
-
-## Inspiration
-
-Inspired by [QuickSnip](https://github.com/Ronin-CK/QuickSnip).
-
-## License
-
-This project is licensed under the BSD 3-Clause License.
-
----
-
-> If you find `nshot` useful, please give it a ⭐ and share! 🎉
+- Inspired by [QuickSnip](https://github.com/Ronin-CK/QuickSnip).
+- Licensed under [BSD 3-Clause](LICENSE).
