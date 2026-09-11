@@ -36,7 +36,7 @@
 
           nshot = pkgs.stdenv.mkDerivation {
             pname = "nshot";
-            version = "0.1.0";
+            version = "0.2.0";
 
             src = lib.cleanSource ./.;
 
@@ -44,7 +44,6 @@
               pkgs.makeWrapper
             ];
 
-            # 避免 Qt 钩子拦截，quickshell 已具有完整的 Qt 运行时包装
             dontWrapQtApps = true;
 
             installPhase = ''
